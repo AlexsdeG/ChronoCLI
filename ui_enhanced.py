@@ -45,7 +45,7 @@ class ChronoCLIUI:
             self.monthly_summaries = self.calculator.calculate_monthly_summary(self.entries)
     
     def load_data_from_string(self):
-        """Load data from user input string."""
+        """Load data from user input string with flexible separators."""
         self.clear_screen()
         print("📝 Load Data from String")
         print("=" * 50)
@@ -56,6 +56,8 @@ class ChronoCLIUI:
         print("• German dates: 30.6.25, 13.9, 01.07.2025")
         print("• Time ranges: 9:00 - 12:00, 13:00-17:00")
         print("• Locations: C (Company), H (Homeoffice)")
+        print("• Column separators: comma (,), semicolon (;), tab")
+        print("• Row separators: newline (\\n), double newline (\\n\\n), double comma (,,), double semicolon (;;)")
         print("-" * 50)
         
         lines = []
@@ -75,7 +77,8 @@ class ChronoCLIUI:
         
         try:
             text_data = '\n'.join(lines)
-            new_entries = self.parser.parse_input(text_data)
+            # Use enhanced parsing with flexible separators
+            new_entries = self.parser.parse_input_with_separators(text_data)
             
             if not new_entries:
                 print("❌ No valid entries found in the data.")

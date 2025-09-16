@@ -125,7 +125,7 @@ class DataMerger:
     
     def _is_duplicate(self, entry1: TimeEntry, entry2: TimeEntry) -> bool:
         """
-        Check if two entries are duplicates.
+        Check if two entries are duplicates with enhanced logic to avoid false positives.
         
         Args:
             entry1: First TimeEntry
@@ -157,30 +157,49 @@ class DataMerger:
         if entry1.location != entry2.location:
             return False
         
-        # Optional: Check if descriptions are similar (if both exist)
-        if entry1.description and entry2.description:
-            # Simple similarity check - can be enhanced
-            desc1_lower = entry1.description.lower().strip()
-            desc2_lower = entry2.description.lower().strip()
-            
-            # Check if one description contains the other or vice versa
-            if (desc1_lower in desc2_lower or desc2_lower in desc1_lower):
-                return True
-            
-            # Check for high similarity (simple approach)
-            words1 = set(desc1_lower.split())
-            words2 = set(desc2_lower.split())
-            
-            if words1 and words2:
-                intersection = words1.intersection(words2)
-                union = words1.union(words2)
-                similarity = len(intersection) / len(union)
-                
-                if similarity > 0.7:  # 70% similarity threshold
-                    return True
-        elif not entry1.description and not entry2.description:
-            # Both have no description, consider them duplicates based on time
+        # Enhanced description checking to avoid false positives
+        desc1 = entry1.description.strip() if entry1.description else ""
+        desc2 = entry2.description.strip() if entry2.description else ""
+        
+        # If both have no description, consider them duplicates based on time
+        if not desc1 and not desc2:
             return True
+        
+        # If only one has description, they might be sub-rows - don't consider duplicates
+        if (desc1 and not desc2) or (not desc1 and desc2):
+            return False
+        
+        # Both have descriptions - check for similarity
+        desc1_lower = desc1.lower()
+        desc2_lower = desc2.lower()
+        
+        # Check for exact match
+        if desc1_lower == desc2_lower:
+            return True
+        
+        # Check if one is a substring of the other (likely sub-row continuation)
+        if desc1_lower in desc2_lower or desc2_lower in desc1_lower:
+            # But only if the substring is significant (not just common words)
+            longer_desc = desc1_lower if len(desc1_lower) > len(desc2_lower) else desc2_lower
+            shorter_desc = desc2_lower if len(desc1_lower) > len(desc2_lower) else desc1_lower
+            
+            # If the shorter description is less than 30% of the longer one,
+            # it's likely a sub-row continuation, not a duplicate
+            if len(shorter_desc) < 0.3 * len(longer_desc):
+                return False
+        
+        # Check for high similarity using word overlap
+        words1 = set(desc1_lower.split())
+        words2 = set(desc2_lower.split())
+        
+        if words1 and words2:
+            intersection = words1.intersection(words2)
+            union = words1.union(words2)
+            similarity = len(intersection) / len(union)
+            
+            # Higher threshold for similarity to avoid false positives
+            if similarity > 0.8:  # 80% similarity threshold
+                return True
         
         return False
     
@@ -276,14 +295,24 @@ class DataMerger:
         return overlapping_pairs
     
     def _entries_overlap(self, entry1: TimeEntry, entry2: TimeEntry) -> bool:
-        """Check if two entries overlap in time."""
-        return (entry1.start_time < entry2.end_time and 
-                entry2.start_time < entry1.end_time)
+        """Check if two entries overlap in time with enhanced tolerance."""
+        # Add a small buffer time to avoid false positives with identical times
+        buffer_time = timedelta(minutes=1)
+        
+        # Check for actual overlap with buffer
+        return (entry1.start_time < (entry2.end_time + buffer_time) and 
+                entry2.start_time < (entry1.end_time + buffer_time))
+    
+    def _is_exact_time_match(self, entry1: TimeEntry, entry2: TimeEntry) -> bool:
+        """Check if two entries have exactly the same time (likely Excel sub-rows)."""
+        return (entry1.start_time == entry2.start_time and 
+                entry1.end_time == entry2.end_time and
+                entry1.location == entry2.location)
     
     def suggest_merge_conflicts(self, existing_entries: List[TimeEntry],
                                new_entries: List[TimeEntry]) -> List[str]:
         """
-        Suggest potential merge conflicts before performing the merge.
+        Suggest potential merge conflicts before performing the merge with enhanced logic.
         
         Args:
             existing_entries: List of existing TimeEntry objects
@@ -299,16 +328,26 @@ class DataMerger:
         overlapping_pairs = self.detect_overlapping_entries(all_entries)
         
         for entry1, entry2 in overlapping_pairs:
+            # Skip if they're exact time matches (likely Excel sub-rows)
+            if self._is_exact_time_match(entry1, entry2):
+                continue
+                
             if (entry1 in existing_entries and entry2 in new_entries) or \
                (entry1 in new_entries and entry2 in existing_entries):
                 
-                conflict_desc = (
-                    f"Time overlap: {entry1.start_time.strftime('%Y-%m-%d %H:%M')} - "
-                    f"{entry1.end_time.strftime('%H:%M')} overlaps with "
-                    f"{entry2.start_time.strftime('%Y-%m-%d %H:%M')} - "
-                    f"{entry2.end_time.strftime('%H:%M')}"
-                )
-                conflicts.append(conflict_desc)
+                # Only report significant overlaps (more than 5 minutes)
+                overlap_start = max(entry1.start_time, entry2.start_time)
+                overlap_end = min(entry1.end_time, entry2.end_time)
+                overlap_duration = overlap_end - overlap_start
+                
+                if overlap_duration > timedelta(minutes=5):
+                    conflict_desc = (
+                        f"Time overlap: {entry1.start_time.strftime('%Y-%m-%d %H:%M')} - "
+                        f"{entry1.end_time.strftime('%H:%M')} overlaps with "
+                        f"{entry2.start_time.strftime('%Y-%m-%d %H:%M')} - "
+                        f"{entry2.end_time.strftime('%H:%M')} ({overlap_duration.total_seconds()/60:.0f}min)"
+                    )
+                    conflicts.append(conflict_desc)
         
         # Check for potential duplicates with different descriptions
         for new_entry in new_entries:

@@ -129,6 +129,265 @@ class DataParser:
         except Exception:
             raise ValueError(f"Invalid time format: {time_str}")
     
+    def parse_input_with_separators(self, text_data: str) -> List[TimeEntry]:
+        """Parse input text data with flexible column and row separators."""
+        entries = []
+        
+        # Normalize different line endings
+        text_data = text_data.replace('\r\n', '\n').replace('\r', '\n')
+        
+        # Split into rows using various row separators
+        rows = self._split_into_rows(text_data)
+        
+        for row in rows:
+            # Split row into columns using various column separators
+            columns = self._split_into_columns(row)
+            
+            if len(columns) >= 2:  # Need at least date and time
+                try:
+                    entry = self._parse_columns_to_entry(columns)
+                    if entry:
+                        entries.append(entry)
+                except Exception as e:
+                    print(f"Warning: Could not parse row '{row}': {e}")
+        
+        return entries
+    
+    def _split_into_rows(self, text_data: str) -> List[str]:
+        """Split text data into rows using various separators."""
+        rows = []
+        
+        # Normalize different line endings
+        text_data = text_data.replace('\r\n', '\n').replace('\r', '\n')
+        
+        # First split by single newlines to get all lines
+        all_lines = [line.strip() for line in text_data.split('\n') if line.strip()]
+        
+        # Group lines into logical entries
+        current_entry = []
+        
+        for line in all_lines:
+            # Skip month headers
+            if self._is_month_header(line):
+                continue
+            
+            # If line contains a date, start new entry
+            if self._is_date_line(line):
+                if current_entry:
+                    # Join with the same separator that was used in the line
+                    separator = self._detect_separator(current_entry[0])
+                    rows.append(separator.join(current_entry))
+                    current_entry = []
+                current_entry.append(line)
+            # If line contains time range, add to current entry
+            elif self._is_time_range_line(line):
+                current_entry.append(line)
+            # If line is location or description, add to current entry
+            elif line in self.location_mappings or len(line) > 3:
+                current_entry.append(line)
+        
+        # Add the last entry if exists
+        if current_entry:
+            separator = self._detect_separator(current_entry[0]) if current_entry else ', '
+            rows.append(separator.join(current_entry))
+        
+        # Now check for double separators in the rows we created
+        final_rows = []
+        for row in rows:
+            # Check if row contains double comma or double semicolon separators
+            if ',,' in row or ';;' in row:
+                # Split by double separators
+                if ',,' in row and ';;' in row:
+                    # Use the one that appears more frequently
+                    comma_count = row.count(',,')
+                    semicolon_count = row.count(';;')
+                    separator = ',,' if comma_count >= semicolon_count else ';;'
+                elif ',,' in row:
+                    separator = ',,'
+                else:
+                    separator = ';;'
+                
+                sub_rows = [r.strip() for r in row.split(separator) if r.strip()]
+                final_rows.extend(sub_rows)
+            else:
+                # Check if this row contains multiple dates (multiple entries)
+                # Try different separators to split multiple entries
+                for separator in [',', ';']:
+                    date_parts = [part.strip() for part in row.split(separator) if self._is_date_line(part.strip())]
+                    if len(date_parts) > 1:
+                        # Split by this separator to create separate entries
+                        parts = [part.strip() for part in row.split(separator)]
+                        current_sub_entry = []
+                        
+                        for part in parts:
+                            if self._is_date_line(part):
+                                if current_sub_entry:
+                                    final_rows.append(', '.join(current_sub_entry))
+                                    current_sub_entry = []
+                                current_sub_entry.append(part)
+                            else:
+                                current_sub_entry.append(part)
+                        
+                        if current_sub_entry:
+                            final_rows.append(', '.join(current_sub_entry))
+                        break
+                else:
+                    final_rows.append(row)
+        
+        return final_rows
+    
+    def _detect_separator(self, text: str) -> str:
+        """Detect the separator used in the text."""
+        if ';' in text:
+            return '; '
+        elif ',' in text:
+            return ', '
+        else:
+            return ', '
+    
+    def _is_structured_data(self, lines: List[str]) -> bool:
+        """Check if lines represent structured data with dates and times."""
+        date_count = sum(1 for line in lines if self._is_date_line(line))
+        time_count = sum(1 for line in lines if self._is_time_range_line(line))
+        
+        # Consider structured if we have at least one date and one time
+        return date_count > 0 and time_count > 0
+    
+    def _process_structured_data(self, lines: List[str]) -> List[str]:
+        """Process structured data lines into individual entries."""
+        entries = []
+        current_entry = []
+        
+        for line in lines:
+            # Skip month headers
+            if self._is_month_header(line):
+                continue
+            
+            # If line contains a date, start new entry
+            if self._is_date_line(line):
+                if current_entry:
+                    entries.append(' | '.join(current_entry))
+                    current_entry = []
+                current_entry.append(line)
+            # If line contains time range, add to current entry
+            elif self._is_time_range_line(line):
+                current_entry.append(line)
+            # If line is location or description, add to current entry
+            elif line in self.location_mappings or len(line) > 3:
+                current_entry.append(line)
+        
+        # Add the last entry if exists
+        if current_entry:
+            entries.append(' | '.join(current_entry))
+        
+        return entries
+    
+    def _split_into_columns(self, row: str) -> List[str]:
+        """Split a row into columns using various separators."""
+        # Try different separators in order of preference
+        separators = [';', '\t', ',']
+        
+        for separator in separators:
+            if separator in row:
+                columns = [col.strip() for col in row.split(separator) if col.strip()]
+                if len(columns) >= 2:  # Found a good separator
+                    return columns
+        
+        # If no separator found, try to parse as single entry with time range
+        if self._is_time_range_line(row):
+            return [row.strip()]
+        
+        # If no separator found and no time range, treat as single column
+        return [row.strip()] if row.strip() else []
+    
+    def _group_lines_into_entries(self, lines: List[str]) -> List[str]:
+        """Group consecutive lines into logical entries."""
+        entries = []
+        current_entry = []
+        
+        for line in lines:
+            # Skip month headers
+            if self._is_month_header(line):
+                continue
+            
+            # If line contains a date, start new entry
+            if self._is_date_line(line):
+                if current_entry:
+                    entries.append(' | '.join(current_entry))
+                    current_entry = []
+                current_entry.append(line)
+            # If line contains time range, add to current entry
+            elif self._is_time_range_line(line):
+                current_entry.append(line)
+            # If line is location or description, add to current entry
+            elif line in self.location_mappings or len(line) > 3:
+                current_entry.append(line)
+            # Empty line or separator - finish current entry
+            else:
+                if current_entry:
+                    entries.append(' | '.join(current_entry))
+                    current_entry = []
+        
+        # Add the last entry if exists
+        if current_entry:
+            entries.append(' | '.join(current_entry))
+        
+        return entries
+    
+    def _parse_columns_to_entry(self, columns: List[str]) -> Optional[TimeEntry]:
+        """Parse columns into a TimeEntry object."""
+        if len(columns) < 2:
+            return None
+        
+        # Try to identify which column contains what
+        date_str = None
+        time_str = None
+        location_str = None
+        description = None
+        
+        for col in columns:
+            col = col.strip()
+            if not col:
+                continue
+                
+            # Check if it's a date
+            if self._is_date_line(col):
+                date_str = col
+            # Check if it's a time range
+            elif self._is_time_range_line(col):
+                time_str = col
+            # Check if it's a location
+            elif col in self.location_mappings:
+                location_str = col
+            # Otherwise, treat as description
+            elif len(col) > 2:
+                description = col
+        
+        if not date_str or not time_str:
+            return None
+        
+        try:
+            # Parse date
+            current_date = self.parse_german_date(date_str)
+            
+            # Parse time range
+            start_time, end_time = self.parse_time_range(time_str, current_date)
+            duration = end_time - start_time
+            
+            # Map location
+            location = self.location_mappings.get(location_str, location_str or "Unknown")
+            
+            return TimeEntry(
+                start_time=start_time,
+                end_time=end_time,
+                duration=duration,
+                location=location,
+                description=description or ""
+            )
+            
+        except Exception as e:
+            raise ValueError(f"Could not parse entry from columns {columns}: {e}")
+    
     def parse_input(self, text_data: str) -> List[TimeEntry]:
         """Parse input text data and return list of TimeEntry objects."""
         entries = []
@@ -297,12 +556,15 @@ class DataParser:
             raise ValueError(f"Error reading CSV file: {e}")
     
     def _load_from_excel(self, file_path: Path) -> List[TimeEntry]:
-        """Load data from Excel file."""
+        """Load data from Excel file with enhanced multi-row handling."""
         try:
             import pandas as pd
             
             # Read Excel file
             df = pd.read_excel(file_path)
+            
+            # Clean the data - remove empty rows and columns
+            df = df.dropna(how='all').dropna(axis=1, how='all')
             
             # Find column mappings
             date_column = self._find_column_mapping(df.columns.tolist(), ['date', 'datum', 'day'])
@@ -312,6 +574,10 @@ class DataParser:
             
             entries = []
             
+            # Group rows by date to handle multi-row entries
+            current_date = None
+            current_entries = []
+            
             for _, row in df.iterrows():
                 try:
                     # Extract data from row
@@ -320,31 +586,46 @@ class DataParser:
                     location_str = str(row.get(location_column, '')).strip()
                     description = str(row.get(info_column, '')).strip()
                     
-                    if not date_str or not hours_str or date_str == 'nan' or hours_str == 'nan':
+                    # Skip completely empty rows
+                    if (date_str == 'nan' and hours_str == 'nan' and 
+                        location_str == 'nan' and description == 'nan'):
                         continue
                     
-                    # Parse date
-                    current_date = self.parse_german_date(date_str)
+                    # Handle date inheritance (sub-rows)
+                    if date_str != 'nan' and date_str:
+                        current_date = date_str
+                    elif current_date is None:
+                        continue  # Skip row without date
                     
-                    # Parse time range
-                    start_time, end_time = self.parse_time_range(hours_str, current_date)
-                    duration = end_time - start_time
-                    
-                    # Map location
-                    location = self.location_mappings.get(location_str, location_str or "Unknown")
-                    
-                    entry = TimeEntry(
-                        start_time=start_time,
-                        end_time=end_time,
-                        duration=duration,
-                        location=location,
-                        description=description
-                    )
-                    entries.append(entry)
+                    # Handle time inheritance (sub-rows)
+                    if hours_str != 'nan' and hours_str:
+                        # Process previous entries if any
+                        if current_entries:
+                            entries.extend(current_entries)
+                            current_entries = []
+                        
+                        # Parse this as a main entry
+                        entry = self._create_entry_from_row(
+                            current_date, hours_str, location_str, description
+                        )
+                        if entry:
+                            entries.append(entry)
+                    elif current_entries:
+                        # This is a sub-row, add to the last entry
+                        if description != 'nan' and description:
+                            current_entries[-1].description += f" {description}"
+                    else:
+                        # Look for previous entry to append description
+                        if entries and description != 'nan' and description:
+                            entries[-1].description += f" {description}"
                     
                 except Exception as e:
                     print(f"Warning: Could not parse row {row.to_dict()}: {e}")
                     continue
+            
+            # Add any remaining entries
+            if current_entries:
+                entries.extend(current_entries)
             
             return entries
             
@@ -352,6 +633,36 @@ class DataParser:
             raise ImportError("Excel support requires pandas library")
         except Exception as e:
             raise ValueError(f"Error reading Excel file: {e}")
+    
+    def _create_entry_from_row(self, date_str: str, hours_str: str, 
+                              location_str: str, description: str) -> Optional[TimeEntry]:
+        """Create a TimeEntry from row data."""
+        try:
+            # Parse date
+            current_date = self.parse_german_date(date_str)
+            
+            # Parse time range
+            start_time, end_time = self.parse_time_range(hours_str, current_date)
+            duration = end_time - start_time
+            
+            # Map location
+            location = self.location_mappings.get(location_str, location_str or "Unknown")
+            
+            # Clean description
+            if description == 'nan':
+                description = ""
+            
+            return TimeEntry(
+                start_time=start_time,
+                end_time=end_time,
+                duration=duration,
+                location=location,
+                description=description.strip()
+            )
+            
+        except Exception as e:
+            print(f"Warning: Could not create entry from row data: {e}")
+            return None
     
     def _load_from_text_file(self, file_path: Path) -> List[TimeEntry]:
         """Load data from text file."""

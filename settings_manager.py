@@ -114,7 +114,32 @@ class SettingsManager:
             self.config_dir = Path(config_dir)
         
         self.config_file = self.config_dir / "config.json"
+        
+        # Create config file if it doesn't exist
+        if not self.config_file.exists():
+            self._create_default_config()
+        
         self.config = self.load_config()
+    
+    def _create_default_config(self):
+        """Create a default configuration file."""
+        try:
+            # Create default config
+            default_config = AppConfig()
+            config_data = asdict(default_config)
+            
+            # Ensure config directory exists
+            self.config_dir.mkdir(exist_ok=True)
+            
+            # Save to file
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(config_data, f, indent=2, ensure_ascii=False)
+            
+            print(f"✅ Created default configuration file: {self.config_file}")
+            
+        except Exception as e:
+            print(f"Warning: Could not create default config file: {e}")
+            print("Using default configuration in memory.")
     
     def load_config(self) -> AppConfig:
         """Load configuration from file or create default."""

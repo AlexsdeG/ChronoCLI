@@ -1,0 +1,88 @@
+{
+  "parsing": {
+    "date_format": "%d.%m.%y",
+    "column_names": {
+      "date": "Datum",
+      "hours": "Stunden",
+      "location": "Ort",
+      "info": "Info"
+    },
+    "location_mappings": {
+      "C": "Company",
+      "H": "Homeoffice",
+      "B": "Business Trip",
+      "T": "Training"
+    },
+    "time_separators": [
+      "-",
+      "–",
+      "—"
+    ],
+    "month_headers": [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+      "Januar",
+      "Februar",
+      "März",
+      "April",
+      "Mai",
+      "Juni",
+      "Juli",
+      "August",
+      "September",
+      "Oktober",
+      "November",
+      "Dezember"
+    ]
+  },
+  "export": {
+    "template_file": "default",
+    "include_raw_data": true,
+    "include_charts": false,
+    "chart_library": "chart.js",
+    "css_theme": "default",
+    "output_filename": "report.html"
+  },
+  "ui": {
+    "menu_style": "ascii_border",
+    "show_help_text": true,
+    "clear_screen": true,
+    "pause_after_action": true,
+    "max_display_entries": 50
+  },
+  "files": {
+    "supported_formats": [
+      ".csv",
+      ".xlsx",
+      ".xls",
+      ".txt",
+      ".json"
+    ],
+    "encoding": "utf-8",
+    "backup_on_save": true,
+    "max_file_size_mb": 10
+  },
+  "version": "2.0.0"
+}
