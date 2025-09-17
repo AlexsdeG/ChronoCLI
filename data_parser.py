@@ -39,6 +39,31 @@ class DataParser:
             # Handle various German date formats
             date_str = date_str.strip()
             
+            # Check for month name format (e.g., "01. Jul", "30. June")
+            month_names = {
+                'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+                'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12,
+                'January': 1, 'February': 2, 'March': 3, 'April': 4, 'May': 5, 'June': 6,
+                'July': 7, 'August': 8, 'September': 9, 'October': 10, 'November': 11, 'December': 12
+            }
+            
+            # Pattern for dd. MonthName format
+            month_name_pattern = r'^(\d{1,2})\.\s*([A-Za-z]{3,9})$'
+            month_match = re.match(month_name_pattern, date_str)
+            if month_match:
+                day = int(month_match.group(1))
+                month_name = month_match.group(2)
+                year = datetime.now().year
+                
+                if month_name in month_names:
+                    month = month_names[month_name]
+                    return datetime(year, month, day)
+                else:
+                    raise ValueError(f"Unknown month name: {month_name}")
+            
+            # Remove spaces for consistent parsing (e.g., "01. Jul" -> "01.Jul")
+            date_str = date_str.replace(' ', '')
+            
             # Handle cases like "13.9" instead of "13.09"
             if re.match(r'^\d{1,2}\.\d{1,2}(\.\d{2,4})?$', date_str):
                 parts = date_str.split('.')
@@ -46,17 +71,45 @@ class DataParser:
                     # Format: dd.mm - add current year
                     day, month = parts
                     year = datetime.now().year
-                    date_str = f"{day.zfill(2)}.{month.zfill(2)}.{year}"
+                    # Ensure day and month are 2 digits
+                    day = day.zfill(2)
+                    month = month.zfill(2)
+                    date_str = f"{day}.{month}.{year}"
                 elif len(parts) == 3:
                     # Format: dd.mm.yy or dd.mm.yyyy
                     day, month, year = parts
+                    # Ensure day and month are 2 digits
+                    day = day.zfill(2)
+                    month = month.zfill(2)
+                    
+                    # Handle year
                     if len(year) == 2:
+                        # For 2-digit years, assume 20xx if year is 00-99
                         year = f"20{year}"
-                    date_str = f"{day.zfill(2)}.{month.zfill(2)}.{year}"
+                    elif len(year) == 4:
+                        # Keep 4-digit year as is
+                        pass
+                    else:
+                        # Invalid year length, use current year
+                        year = str(datetime.now().year)
+                    
+                    date_str = f"{day}.{month}.{year}"
             
             # Parse with dateutil if available, otherwise use fallback
             if DATEUTIL_AVAILABLE:
-                parsed_date = date_parse(date_str, dayfirst=True, yearfirst=False)
+                # Use explicit format parsing to avoid ambiguity
+                try:
+                    # Try parsing with dayfirst=True for German format
+                    parsed_date = date_parse(date_str, dayfirst=True, yearfirst=False)
+                except ValueError:
+                    # If that fails, try with explicit format
+                    try:
+                        parsed_date = datetime.strptime(date_str, '%d.%m.%Y')
+                    except ValueError:
+                        try:
+                            parsed_date = datetime.strptime(date_str, '%d.%m.%y')
+                        except ValueError:
+                            raise ValueError(f"Could not parse date '{date_str}' with German format")
             else:
                 # Fallback parsing without dateutil
                 parsed_date = self._parse_date_fallback(date_str)
@@ -163,7 +216,22 @@ class DataParser:
         # First split by single newlines to get all lines
         all_lines = [line.strip() for line in text_data.split('\n') if line.strip()]
         
-        # Group lines into logical entries
+        # Check if this looks like Excel/CSV format with semicolon separators
+        # If most lines contain semicolons, treat as CSV-style data
+        semicolon_lines = sum(1 for line in all_lines if ';' in line)
+        if semicolon_lines > len(all_lines) * 0.5:  # More than 50% have semicolons
+            # Treat as CSV-style data, each line is a separate row
+            for line in all_lines:
+                # Skip month headers
+                if self._is_month_header(line):
+                    continue
+                # Skip lines that start with * (Excel sub-rows) - they'll be handled in Excel parsing
+                if line.startswith('*'):
+                    continue
+                rows.append(line)
+            return rows
+        
+        # Group lines into logical entries (for text-style data)
         current_entry = []
         
         for line in all_lines:
@@ -464,9 +532,35 @@ class DataParser:
     
     def _is_date_line(self, line: str) -> bool:
         """Check if line contains a date."""
-        # Pattern for dates like dd.mm, dd.mm.yy, dd.mm.yyyy
-        date_pattern = r'^\d{1,2}\.\d{1,2}(\.\d{2,4})?$'
-        return bool(re.match(date_pattern, line.strip()))
+        # Pattern for dates like dd.mm, dd.mm.yy, dd.mm.yyyy, dd. MonthName
+        # More strict pattern to avoid false positives
+        line = line.strip()
+        
+        # Pattern 1: dd.mm, dd.mm.yy, dd.mm.yyyy with optional spaces
+        date_pattern1 = r'^\d{1,2}\.\s*\d{1,2}(\.\s*\d{2,4})?$'
+        
+        # Pattern 2: dd. MonthName (e.g., "01. Jul", "30. June")
+        month_names = r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)'
+        date_pattern2 = rf'^\d{{1,2}}\.\s*{month_names}'
+        
+        if re.match(date_pattern1, line) or re.match(date_pattern2, line):
+            # Additional validation for pattern 1
+            if re.match(date_pattern1, line):
+                # Remove spaces for parsing
+                clean_line = line.replace(' ', '')
+                parts = clean_line.split('.')
+                if len(parts) >= 2:
+                    try:
+                        day, month = int(parts[0]), int(parts[1])
+                        # Validate day and month ranges
+                        if 1 <= day <= 31 and 1 <= month <= 12:
+                            return True
+                    except ValueError:
+                        pass
+            else:
+                # Pattern 2 matched, it's a valid date format
+                return True
+        return False
     
     def _is_time_range_line(self, line: str) -> bool:
         """Check if line contains a time range."""
@@ -576,15 +670,34 @@ class DataParser:
             
             # Group rows by date to handle multi-row entries
             current_date = None
-            current_entries = []
+            current_description_parts = []
             
             for _, row in df.iterrows():
                 try:
-                    # Extract data from row
-                    date_str = str(row.get(date_column, '')).strip()
-                    hours_str = str(row.get(hours_column, '')).strip()
-                    location_str = str(row.get(location_column, '')).strip()
-                    description = str(row.get(info_column, '')).strip()
+                    # Extract data from row - handle datetime objects properly
+                    date_val = row.get(date_column, '')
+                    hours_val = row.get(hours_column, '')
+                    location_val = row.get(location_column, '')
+                    description_val = row.get(info_column, '')
+                    
+                    # Convert to strings, handling datetime objects
+                    if pd.isna(date_val):
+                        date_str = 'nan'
+                    elif hasattr(date_val, 'strftime'):  # datetime object
+                        date_str = date_val.strftime('%d.%m.%Y')
+                    else:
+                        date_str = str(date_val).strip()
+                    
+                    if pd.isna(hours_val):
+                        hours_str = 'nan'
+                    elif hasattr(hours_val, 'strftime'):  # datetime object
+                        # Extract just the time part if it's a datetime
+                        hours_str = hours_val.strftime('%H:%M')
+                    else:
+                        hours_str = str(hours_val).strip()
+                    
+                    location_str = str(location_val).strip() if not pd.isna(location_val) else 'nan'
+                    description = str(description_val).strip() if not pd.isna(description_val) else 'nan'
                     
                     # Skip completely empty rows
                     if (date_str == 'nan' and hours_str == 'nan' and 
@@ -593,39 +706,42 @@ class DataParser:
                     
                     # Handle date inheritance (sub-rows)
                     if date_str != 'nan' and date_str:
+                        # If we have accumulated descriptions, create entry first
+                        if current_date and current_description_parts:
+                            # This shouldn't happen in normal flow, but handle it
+                            pass
                         current_date = date_str
+                        current_description_parts = []
                     elif current_date is None:
                         continue  # Skip row without date
                     
                     # Handle time inheritance (sub-rows)
                     if hours_str != 'nan' and hours_str:
-                        # Process previous entries if any
-                        if current_entries:
-                            entries.extend(current_entries)
-                            current_entries = []
+                        # Combine all description parts
+                        full_description = description if description != 'nan' else ''
+                        if current_description_parts:
+                            all_descriptions = current_description_parts + ([full_description] if full_description else [])
+                            full_description = ' '.join(all_descriptions)
                         
                         # Parse this as a main entry
                         entry = self._create_entry_from_row(
-                            current_date, hours_str, location_str, description
+                            current_date, hours_str, location_str, full_description
                         )
                         if entry:
                             entries.append(entry)
-                    elif current_entries:
-                        # This is a sub-row, add to the last entry
-                        if description != 'nan' and description:
-                            current_entries[-1].description += f" {description}"
+                        
+                        # Reset description accumulator
+                        current_description_parts = []
                     else:
-                        # Look for previous entry to append description
-                        if entries and description != 'nan' and description:
-                            entries[-1].description += f" {description}"
+                        # This is a sub-row, accumulate description
+                        if description != 'nan' and description:
+                            current_description_parts.append(description)
                     
                 except Exception as e:
                     print(f"Warning: Could not parse row {row.to_dict()}: {e}")
                     continue
             
-            # Add any remaining entries
-            if current_entries:
-                entries.extend(current_entries)
+            # No remaining entries to add since we process immediately
             
             return entries
             
@@ -638,8 +754,28 @@ class DataParser:
                               location_str: str, description: str) -> Optional[TimeEntry]:
         """Create a TimeEntry from row data."""
         try:
-            # Parse date
-            current_date = self.parse_german_date(date_str)
+            # Clean up malformed date strings (like '2025-09-1000:00:00')
+            if date_str and '00:00:00' in date_str:
+                # Extract just the date part before time
+                date_str = date_str.split('00:00:00')[0]
+                # Remove any trailing non-date characters
+                date_str = date_str.rstrip('T -')
+            
+            # Handle Excel serial dates (numeric values)
+            if date_str.replace('.', '').replace('-', '').isdigit():
+                try:
+                    # Try as Excel serial date first
+                    excel_date = float(date_str)
+                    # Excel dates are days since 1900-01-01, but 1900 is incorrectly treated as leap year
+                    if excel_date > 59:
+                        excel_date -= 1  # Adjust for Excel leap year bug
+                    current_date = datetime(1899, 12, 30) + timedelta(days=excel_date)
+                except (ValueError, TypeError):
+                    # If conversion fails, try normal parsing
+                    current_date = self.parse_german_date(date_str)
+            else:
+                # Parse date normally
+                current_date = self.parse_german_date(date_str)
             
             # Parse time range
             start_time, end_time = self.parse_time_range(hours_str, current_date)

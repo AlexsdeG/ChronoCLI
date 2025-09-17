@@ -503,13 +503,3 @@ class ChronoCLIUI:
             if self.config.ui.show_help_text:
                 print("💡 Please check your data format and try again.")
             sys.exit(1)
-
-
-# Add method to TimeCalculator class for month name formatting
-def format_month_name(self, year: int, month: int) -> str:
-    """Format year and month as readable string."""
-    from datetime import datetime
-    return datetime(year, month, 1).strftime('%B %Y')
-
-
-TimeCalculator.format_month_name = format_month_name

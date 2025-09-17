@@ -102,13 +102,24 @@ class TimeCalculator:
         company_duration = timedelta()
         homeoffice_duration = timedelta()
         
+        # Find date range
+        min_date = None
+        max_date = None
+        
         for entry in entries:
-            unique_days.add(entry.start_time.date())
+            entry_date = entry.start_time.date()
+            unique_days.add(entry_date)
             unique_months.add((entry.start_time.year, entry.start_time.month))
             
             # Get week number (ISO week)
             year, week, _ = entry.start_time.isocalendar()
             unique_weeks.add((year, week))
+            
+            # Track date range
+            if min_date is None or entry_date < min_date:
+                min_date = entry_date
+            if max_date is None or entry_date > max_date:
+                max_date = entry_date
             
             if entry.location == 'Company':
                 company_duration += entry.duration
@@ -122,7 +133,8 @@ class TimeCalculator:
         company_hours = round(company_duration.total_seconds() / 3600, 2)
         homeoffice_hours = round(homeoffice_duration.total_seconds() / 3600, 2)
         
-        # Calculate averages
+        # Calculate averages based on actual data range, not calendar spread
+        # Use the actual number of months/weeks with data for averages
         average_hours_per_month = round(total_hours / total_months, 2) if total_months > 0 else 0
         average_hours_per_week = round(total_hours / total_weeks, 2) if total_weeks > 0 else 0
         
@@ -167,3 +179,9 @@ class TimeCalculator:
             return f"{whole_hours}h {minutes}m"
         else:
             return f"{whole_hours}h"
+    
+    def format_month_name(self, year: int, month: int) -> str:
+        """Format year and month as readable string."""
+        import calendar
+        month_name = calendar.month_name[month]
+        return f"{month_name} {year}"
